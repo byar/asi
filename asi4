@@ -1,0 +1,124 @@
+#!/usr/bin/python
+import sys
+import select
+import tty
+import termios
+import os
+import re
+from Queue import Queue
+from threading import Thread
+from time import sleep
+import sys
+
+class Keycode:
+    def __init__(self, str):
+        self.cmd=str
+    def __str__(self):
+        return self.cmd
+UP=Keycode("KEYCODE_DPAD_UP")
+DOWN=Keycode("KEYCODE_DPAD_DOWN") 
+LEFT=Keycode("KEYCODE_DPAD_LEFT") 
+RIGHT=Keycode("KEYCODE_DPAD_RIGHT") 
+ENTER=Keycode("KEYCODE_ENTER") 
+TAB=Keycode("KEYCODE_TAB") 
+SPACE=Keycode("KEYCODE_SPACE")
+DELETE=Keycode("KEYCODE_DEL")
+STAR=Keycode("KEYCODE_STAR")
+
+STOP = object()
+DEBUG = False
+def run_cmd(cmd):
+    if DEBUG:
+        sleep(3)
+        print cmd
+    else:
+        os.system(cmd)
+
+def adb_writer():
+    while True:
+        data = dataQueue.get(True)
+        dataQueue.task_done()
+        sym_list=[]
+        if type(data) is str:
+            sym_list.append(data)
+            while not dataQueue.empty():
+                data = dataQueue.get(False)
+                dataQueue.task_done()
+                if type(data) is str:
+                    sym_list.append(data)
+                else:
+                    break
+            inputText = "".join(sym_list)
+            if inputText == '?':
+                run_cmd( "adb shell input text q?")
+                run_cmd("adb shell input keyevent KEYCODE_DPAD_LEFT");
+                run_cmd("adb shell input keyevent KEYCODE_DEL");
+                run_cmd("adb shell input keyevent KEYCODE_DPAD_RIGHT");
+            else:
+                run_cmd( "adb shell input text \"%s\"" % inputText)
+        if data == STOP:
+            print "stopped"
+            return
+        if type(data) is not str:
+            run_cmd("adb shell input keyevent %s" % data)
+def getch():
+    c = sys.stdin.read(1)
+    if DEBUG: print ord(c)
+    return c
+
+dataQueue=Queue()
+t = Thread(target=adb_writer)
+t.daemon = True
+t.start()
+
+old_settings = termios.tcgetattr(sys.stdin)
+try:
+    tty.setcbreak(sys.stdin.fileno())
+    specialChars = [ord(i) for i in "#&();\\\'<>"];
+    while True:
+        c = getch()
+        code = ord(c)
+        if DEBUG: print "code=" + c
+        if code==27:
+            c = getch()
+            if c=="[":
+                c = getch()
+                if c=="A":
+                    dataQueue.put(UP)
+                elif c=="B":
+                    dataQueue.put(DOWN)
+                elif c=="C":
+                    dataQueue.put(RIGHT)
+                elif c=="D":
+                    dataQueue.put(LEFT)
+                else:
+                    raise Exception("skipped: " + c);
+            else:
+                raise Exception("skipped: " + c)
+        elif code==10:
+            dataQueue.put(ENTER)
+        elif code==9:
+            dataQueue.put(TAB)
+        elif code==32:
+            dataQueue.put("%s")
+            #dataQueue.put(SPACE)
+        elif code==127:
+            dataQueue.put(DELETE)
+        elif code==ord('*'):
+            dataQueue.put(STAR)
+        elif code==ord('\"'):
+            dataQueue.put("\\\\\\\"")
+        elif code==ord('\\'):
+            dataQueue.put("\\\\")
+        elif code in specialChars:
+            dataQueue.put("\\"+chr(code));
+        elif 33 <= code <= 126:
+            dataQueue.put(c)
+        else:
+            raise Exception("skipped: " + c);
+
+finally:
+    print "finally"
+    dataQueue.put(STOP)
+    t.join()
+    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
